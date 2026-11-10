@@ -4,10 +4,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
-  <meta name="description" content="只读查询 Elysium 上 Uniswap v4 HYPE/KNTQ 流动性仓位、本金与未领取手续费。">
+  <meta name="description" content="只读查询 Elysium 上 Uniswap v4 HYPE/KNTQ 的 0.3%、0.8% 和 1% 流动性仓位、本金与未领取手续费。">
   <title>HYPE/KNTQ 流动性查询 · Elysium</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%2312110e'/%3E%3Cpath d='M7 21h13M11 11h14' stroke='%23e4b45e' stroke-width='2' stroke-linecap='round'/%3E%3Ccircle cx='20' cy='21' r='2.3' fill='%23f6f1e7'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="./styles.css">
+  <!-- v=3 keeps GitHub Pages from mixing this HTML with an older cached script. -->
+  <link rel="stylesheet" href="./styles.css?v=3">
 </head>
 <body>
   <div class="wrap">
@@ -21,7 +22,7 @@
       </div>
       <div>
         <h1>HYPE / KNTQ 流动性查询</h1>
-        <p class="lede">读取 Elysium（Kinetiq L2）上 Uniswap v4 的 HYPE/KNTQ 池，查看一个钱包的 LP 仓位、本金和未领取手续费。只读查询，不连接钱包。</p>
+        <p class="lede">同时读取 Elysium（Kinetiq L2）上 Uniswap v4 的 HYPE/KNTQ 三档池（0.3%、0.8%、1%），查看一个钱包的 LP 仓位、本金和未领取手续费。只读查询，不连接钱包。</p>
       </div>
     </header>
 
@@ -48,7 +49,11 @@
         <div class="contracts" id="contracts"></div>
       </details>
       <p>
-        <a href="https://www.geckoterminal.com/elysium/pools/0xc96bfd21d36f8e7252f0d80fcb5f3bcacdf47c8b927b20711104713ebeb383ac">GeckoTerminal 池子</a>
+        <a href="https://www.geckoterminal.com/elysium/pools/0xf9b8a9101438145d62c9f03156b203c6c573931167e2d36f9061a32575706c8a">0.3% 池</a>
+        ·
+        <a href="https://www.geckoterminal.com/elysium/pools/0xd210029ab684d92240876c54ec6d5a8b2b1998b71c2c907c1e55de02e13e3472">0.8% 池</a>
+        ·
+        <a href="https://www.geckoterminal.com/elysium/pools/0xc96bfd21d36f8e7252f0d80fcb5f3bcacdf47c8b927b20711104713ebeb383ac">1% 池</a>
         ·
         <a href="https://elysium.kinetiq.xyz/explorer/">Elysium 浏览器</a>
         ·
@@ -57,8 +62,8 @@
     </footer>
   </div>
   <noscript>需要启用 JavaScript。页面只在浏览器里读取链上数据。</noscript>
-  <script src="./vendor/ethers-6.13.5.umd.min.js"></script>
-  <script src="./position-math.js"></script>
-  <script src="./app.js"></script>
+  <script src="./vendor/ethers-6.13.5.umd.min.js?v=6.13.5"></script>
+  <script src="./position-math.js?v=3"></script>
+  <script src="./app.js?v=3"></script>
 </body>
 </html>

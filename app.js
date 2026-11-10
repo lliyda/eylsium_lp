@@ -1,4 +1,5 @@
-/* Read-only HYPE/KNTQ Uniswap v4 position viewer. No wallet, no transactions. */
+/* Read-only HYPE/KNTQ Uniswap v4 position viewer. No wallet, no transactions.
+   Queries the 0.3%, 0.8%, and 1% pools. Each pool keeps its own slot0. */
 (function () {
   "use strict";
 
@@ -12,12 +13,24 @@
   var POOL_MANAGER = "0xE2e105d3F7209A9DA11f83cCf3E7398a753823F1";
   var MULTICALL3 = "0xcA11bde05977b3631167028862bE2a173976CA11";
   var KNTQ = "0xe45a355d9e9cad2ad85f2d03e3ee3102a036acf0";
-  var POOL_ID = "0xc96bfd21d36f8e7252f0d80fcb5f3bcacdf47c8b927b20711104713ebeb383ac";
-  var FEE = 10000;
-  var TICK_SPACING = 200;
   var HYPE_DECIMALS = 18;
-  var GECKO_POOL =
-    "https://api.geckoterminal.com/api/v2/networks/elysium/pools/" + POOL_ID;
+  var POOLS = [
+    {
+      id: "0xf9b8a9101438145d62c9f03156b203c6c573931167e2d36f9061a32575706c8a",
+      fee: 3000,
+      tickSpacing: 60,
+    },
+    {
+      id: "0xd210029ab684d92240876c54ec6d5a8b2b1998b71c2c907c1e55de02e13e3472",
+      fee: 8000,
+      tickSpacing: 120,
+    },
+    {
+      id: "0xc96bfd21d36f8e7252f0d80fcb5f3bcacdf47c8b927b20711104713ebeb383ac",
+      fee: 10000,
+      tickSpacing: 200,
+    },
+  ];
 
   var pmIface = new ethers.Interface([
     "function balanceOf(address owner) view returns (uint256)",
@@ -47,14 +60,31 @@
     );
   }
 
-  function canonicalPoolId() {
-    return poolIdOf({
+  function canonicalKey(pool) {
+    return {
       currency0: ethers.ZeroAddress,
       currency1: KNTQ,
-      fee: FEE,
-      tickSpacing: TICK_SPACING,
+      fee: pool.fee,
+      tickSpacing: pool.tickSpacing,
       hooks: ethers.ZeroAddress,
-    });
+    };
+  }
+
+  function assertCanonicalPools() {
+    for (var i = 0; i < POOLS.length; i++) {
+      var computed = poolIdOf(canonicalKey(POOLS[i]));
+      if (computed.toLowerCase() !== POOLS[i].id.toLowerCase()) {
+        throw new Error("池子参数与 PoolId 不一致：" + feeLabel(POOLS[i].fee));
+      }
+    }
+  }
+
+  function matchPool(key) {
+    var id = poolIdOf(key).toLowerCase();
+    for (var i = 0; i < POOLS.length; i++) {
+      if (POOLS[i].id.toLowerCase() === id) return POOLS[i];
+    }
+    return null;
   }
 
   function makeProvider() {
@@ -219,14 +249,14 @@
       for (var i = 0; i < slice.length; i++) {
         if (!infoResults[i].success || infoResults[i].returnData === "0x") continue;
         var decoded = pmIface.decodeFunctionResult("getPoolAndPositionInfo", infoResults[i].returnData);
-        var key = decoded[0];
-        var packed = decoded[1];
-        if (poolIdOf(key).toLowerCase() !== POOL_ID.toLowerCase()) continue;
-        var ticks = math.decodePositionInfo(packed);
+        var pool = matchPool(decoded[0]);
+        if (!pool) continue;
+        var ticks = math.decodePositionInfo(decoded[1]);
         matched.push({
           tokenId: slice[i],
-          fee: Number(key.fee),
-          tickSpacing: Number(key.tickSpacing),
+          poolId: pool.id,
+          fee: Number(decoded[0].fee),
+          tickSpacing: Number(decoded[0].tickSpacing),
           tickLower: ticks.tickLower,
           tickUpper: ticks.tickUpper,
         });
@@ -239,7 +269,7 @@
           target: STATE_VIEW,
           allowFailure: true,
           callData: svIface.encodeFunctionData("getPositionInfo", [
-            POOL_ID,
+            pos.poolId,
             POSITION_MANAGER,
             pos.tickLower,
             pos.tickUpper,
@@ -250,7 +280,7 @@
           target: STATE_VIEW,
           allowFailure: true,
           callData: svIface.encodeFunctionData("getFeeGrowthInside", [
-            POOL_ID,
+            pos.poolId,
             pos.tickLower,
             pos.tickUpper,
           ]),
@@ -260,17 +290,28 @@
       for (var n = 0; n < matched.length; n++) {
         var infoResult = stateResults[n * 2];
         var growthResult = stateResults[n * 2 + 1];
+        var base = matched[n];
         if (!infoResult.success || !growthResult.success || infoResult.returnData === "0x" || growthResult.returnData === "0x") {
-          throw new Error("读取仓位 #" + matched[n].tokenId.toString() + " 失败");
+          positions.push({
+            tokenId: base.tokenId,
+            poolId: base.poolId,
+            fee: base.fee,
+            tickSpacing: base.tickSpacing,
+            tickLower: base.tickLower,
+            tickUpper: base.tickUpper,
+            readError: "读取仓位 #" + base.tokenId.toString() + " 失败",
+          });
+          continue;
         }
         var posInfo = svIface.decodeFunctionResult("getPositionInfo", infoResult.returnData);
         var growth = svIface.decodeFunctionResult("getFeeGrowthInside", growthResult.returnData);
         positions.push({
-          tokenId: matched[n].tokenId,
-          fee: matched[n].fee,
-          tickSpacing: matched[n].tickSpacing,
-          tickLower: matched[n].tickLower,
-          tickUpper: matched[n].tickUpper,
+          tokenId: base.tokenId,
+          poolId: base.poolId,
+          fee: base.fee,
+          tickSpacing: base.tickSpacing,
+          tickLower: base.tickLower,
+          tickUpper: base.tickUpper,
           liquidity: posInfo[0],
           feeGrowth0Last: posInfo[1],
           feeGrowth1Last: posInfo[2],
@@ -285,11 +326,123 @@
     return positions;
   }
 
-  async function fetchGeckoPrices() {
-    var response = await fetch(GECKO_POOL, {
-      headers: { accept: "application/json" },
-      signal: AbortSignal.timeout(8000),
+  function valuePositions(rawPositions, poolStates) {
+    var byId = {};
+    poolStates.forEach(function (pool) {
+      byId[pool.id.toLowerCase()] = pool;
     });
+    return rawPositions.map(function (pos) {
+      var pool = byId[String(pos.poolId).toLowerCase()];
+      if (pos.readError || pos.liquidity == null) {
+        return {
+          tokenId: pos.tokenId,
+          poolId: pos.poolId,
+          fee: pos.fee,
+          tickSpacing: pos.tickSpacing,
+          tickLower: pos.tickLower,
+          tickUpper: pos.tickUpper,
+          readError: pos.readError || "读取仓位失败",
+          fee0: null,
+          fee1: null,
+          principal0: null,
+          principal1: null,
+          inRange: null,
+          poolTick: null,
+        };
+      }
+      var fees = math.getUnclaimedFees(
+        pos.feeGrowth0,
+        pos.feeGrowth1,
+        pos.feeGrowth0Last,
+        pos.feeGrowth1Last,
+        pos.liquidity
+      );
+      var priced = pool && !pool.error && pool.sqrtPriceX96 != null && pool.tick != null;
+      var amounts = null;
+      if (priced) {
+        amounts = math.getAmounts({
+          sqrtPriceX96: pool.sqrtPriceX96,
+          tick: pool.tick,
+          tickLower: pos.tickLower,
+          tickUpper: pos.tickUpper,
+          liquidity: pos.liquidity,
+        });
+      }
+      return {
+        tokenId: pos.tokenId,
+        poolId: pos.poolId,
+        fee: pos.fee,
+        tickSpacing: pos.tickSpacing,
+        tickLower: pos.tickLower,
+        tickUpper: pos.tickUpper,
+        liquidity: pos.liquidity,
+        fee0: fees.fee0,
+        fee1: fees.fee1,
+        principal0: amounts ? amounts.amount0 : null,
+        principal1: amounts ? amounts.amount1 : null,
+        inRange: priced ? pool.tick >= pos.tickLower && pool.tick < pos.tickUpper : null,
+        poolTick: priced ? pool.tick : null,
+      };
+    });
+  }
+
+  function summarizePositions(list) {
+    var fee0 = 0n;
+    var fee1 = 0n;
+    var principal0 = 0n;
+    var principal1 = 0n;
+    var feesKnown = true;
+    var principalKnown = true;
+    var inRange = 0;
+    for (var i = 0; i < list.length; i++) {
+      var pos = list[i];
+      if (pos.fee0 == null || pos.fee1 == null) {
+        feesKnown = false;
+        principalKnown = false;
+        continue;
+      }
+      fee0 += pos.fee0;
+      fee1 += pos.fee1;
+      if (pos.principal0 == null || pos.principal1 == null) principalKnown = false;
+      else {
+        principal0 += pos.principal0;
+        principal1 += pos.principal1;
+      }
+      if (pos.inRange === true) inRange += 1;
+    }
+    return {
+      count: list.length,
+      inRange: inRange,
+      fee0: fee0,
+      fee1: fee1,
+      principal0: principal0,
+      principal1: principal1,
+      feesKnown: feesKnown,
+      principalKnown: principalKnown,
+    };
+  }
+
+  function decodeSlot0(result) {
+    if (!result || !result.success || !result.returnData || result.returnData === "0x") return null;
+    try {
+      var slot0 = svIface.decodeFunctionResult("getSlot0", result.returnData);
+      return {
+        sqrtPriceX96: slot0[0],
+        tick: Number(slot0[1]),
+        lpFee: Number(slot0[3]),
+        priceX18: math.priceX18FromSqrt(slot0[0]),
+        error: null,
+      };
+    } catch (err) {
+      return null;
+    }
+  }
+
+  async function fetchGeckoPool(poolId) {
+    var response = await fetch(
+      "https://api.geckoterminal.com/api/v2/networks/elysium/pools/" + poolId,
+      { headers: { accept: "application/json" }, signal: AbortSignal.timeout(8000) }
+    );
     if (!response.ok) throw new Error("GeckoTerminal HTTP " + response.status);
     var body = await response.json();
     var attrs = body && body.data && body.data.attributes;
@@ -309,6 +462,19 @@
     return { hype: String(hype), kntq: String(kntq), source: "GeckoTerminal" };
   }
 
+  async function fetchGeckoPrices() {
+    var order = [POOLS[2], POOLS[0], POOLS[1]];
+    var lastErr = null;
+    for (var i = 0; i < order.length; i++) {
+      try {
+        return await fetchGeckoPool(order[i].id);
+      } catch (err) {
+        lastErr = err;
+      }
+    }
+    throw lastErr || new Error("GeckoTerminal 不可用");
+  }
+
   async function fetchFallbackPrices(humanPriceStr) {
     var response = await fetch(
       "https://api.coingecko.com/api/v3/simple/price?ids=hyperliquid&vs_currencies=usd",
@@ -324,7 +490,7 @@
     return {
       hype: String(hype),
       kntq: (hype / price).toFixed(12).replace(/0+$/, "").replace(/\.$/, ""),
-      source: "CoinGecko 的 HYPE 价格，KNTQ 按池内价格折算",
+      source: "CoinGecko 的 HYPE 价格，KNTQ 按 1% 池价格折算",
     };
   }
 
@@ -333,6 +499,7 @@
       return await fetchGeckoPrices();
     } catch (err) {
       try {
+        if (!humanPriceStr) return null;
         return await fetchFallbackPrices(humanPriceStr);
       } catch (fallbackErr) {
         return null;
@@ -346,15 +513,12 @@
     if (!ethers.isAddress(address)) {
       throw new Error("请输入有效的钱包地址。");
     }
+    assertCanonicalPools();
     var wallet = ethers.getAddress(address);
-    var computedPool = canonicalPoolId();
-    if (computedPool.toLowerCase() !== POOL_ID.toLowerCase()) {
-      throw new Error("池子参数与链上 PoolId 不一致。");
-    }
     var queriedAt = new Date();
     var provider = makeProvider();
     try {
-      onStatus("正在读取区块…");
+      onStatus("正在读取区块和三个池的价格…");
       var block = await provider.getBlock(opts.blockTag == null ? "latest" : opts.blockTag);
       var blockTag = block.number;
       var headCalls = [
@@ -369,11 +533,6 @@
           callData: pmIface.encodeFunctionData("nextTokenId", []),
         },
         {
-          target: STATE_VIEW,
-          allowFailure: true,
-          callData: svIface.encodeFunctionData("getSlot0", [POOL_ID]),
-        },
-        {
           target: KNTQ,
           allowFailure: true,
           callData: erc20Iface.encodeFunctionData("decimals", []),
@@ -384,55 +543,78 @@
           callData: erc20Iface.encodeFunctionData("symbol", []),
         },
       ];
+      POOLS.forEach(function (pool) {
+        headCalls.push({
+          target: STATE_VIEW,
+          allowFailure: true,
+          callData: svIface.encodeFunctionData("getSlot0", [pool.id]),
+        });
+      });
       var head = await aggregate(provider, headCalls, blockTag);
       var balance = pmIface.decodeFunctionResult("balanceOf", must(head[0], "读取 NFT 余额").returnData)[0];
       var nextTokenId = pmIface.decodeFunctionResult("nextTokenId", must(head[1], "读取 NFT 序号").returnData)[0];
-      var slot0 = svIface.decodeFunctionResult("getSlot0", must(head[2], "读取池子价格").returnData);
       var kntqDecimals = HYPE_DECIMALS;
       var kntqSymbol = "KNTQ";
       if (head[3].success && head[3].returnData !== "0x") {
-        kntqDecimals = Number(erc20Iface.decodeFunctionResult("decimals", head[3].returnData)[0]);
+        kntqSymbol = erc20Iface.decodeFunctionResult("symbol", head[3].returnData)[0];
       }
-      if (head[4].success && head[4].returnData !== "0x") {
-        kntqSymbol = erc20Iface.decodeFunctionResult("symbol", head[4].returnData)[0];
+      if (head[2].success && head[2].returnData !== "0x") {
+        kntqDecimals = Number(erc20Iface.decodeFunctionResult("decimals", head[2].returnData)[0]);
       }
-      var sqrtPriceX96 = slot0[0];
-      var tick = Number(slot0[1]);
-      var lpFee = Number(slot0[3]);
-      var priceX18 = math.priceX18FromSqrt(sqrtPriceX96);
-      var humanPriceStr = math.formatScaled(priceX18, 18, 18, false);
+      var poolStates = POOLS.map(function (pool, index) {
+        var decoded = decodeSlot0(head[4 + index]);
+        if (!decoded) {
+          return {
+            id: pool.id,
+            fee: pool.fee,
+            tickSpacing: pool.tickSpacing,
+            sqrtPriceX96: null,
+            tick: null,
+            lpFee: null,
+            priceX18: null,
+            error: "读取池子价格失败",
+          };
+        }
+        return {
+          id: pool.id,
+          fee: pool.fee,
+          tickSpacing: pool.tickSpacing,
+          sqrtPriceX96: decoded.sqrtPriceX96,
+          tick: decoded.tick,
+          lpFee: decoded.lpFee,
+          priceX18: decoded.priceX18,
+          error: null,
+        };
+      });
       var tokenIds = await findTokenIds(provider, wallet, balance, nextTokenId, blockTag, onStatus);
       var rawPositions = await readPositions(provider, tokenIds, blockTag, onStatus);
+      var valued = valuePositions(rawPositions, poolStates);
+      var onePercent = poolStates[poolStates.length - 1];
+      var humanPriceStr = onePercent && onePercent.priceX18 != null
+        ? math.formatScaled(onePercent.priceX18, 18, 18, false)
+        : null;
       onStatus("正在获取美元价格…");
-      var prices = await loadPrices(humanPriceStr);
-      var positions = rawPositions.map(function (pos) {
-        var amounts = math.getAmounts({
-          sqrtPriceX96: sqrtPriceX96,
-          tick: tick,
-          tickLower: pos.tickLower,
-          tickUpper: pos.tickUpper,
-          liquidity: pos.liquidity,
+      var prices = opts.skipPrices ? null : await loadPrices(humanPriceStr);
+      var groups = poolStates.map(function (pool) {
+        var positions = valued.filter(function (pos) {
+          return pos.poolId.toLowerCase() === pool.id.toLowerCase();
         });
-        var fees = math.getUnclaimedFees(
-          pos.feeGrowth0,
-          pos.feeGrowth1,
-          pos.feeGrowth0Last,
-          pos.feeGrowth1Last,
-          pos.liquidity
-        );
         return {
-          tokenId: pos.tokenId,
-          tickLower: pos.tickLower,
-          tickUpper: pos.tickUpper,
-          inRange: tick >= pos.tickLower && tick < pos.tickUpper,
-          liquidity: pos.liquidity,
-          fee: pos.fee,
-          tickSpacing: pos.tickSpacing,
-          principal0: amounts.amount0,
-          principal1: amounts.amount1,
-          fee0: fees.fee0,
-          fee1: fees.fee1,
+          id: pool.id,
+          fee: pool.fee,
+          tickSpacing: pool.tickSpacing,
+          tick: pool.tick,
+          sqrtPriceX96: pool.sqrtPriceX96,
+          priceX18: pool.priceX18,
+          lpFee: pool.lpFee,
+          error: pool.error,
+          positions: positions,
+          subtotal: summarizePositions(positions),
         };
+      });
+      var flat = [];
+      groups.forEach(function (group) {
+        flat = flat.concat(group.positions);
       });
       onStatus("");
       return {
@@ -440,15 +622,13 @@
         blockNumber: blockTag,
         blockTime: new Date(Number(block.timestamp) * 1000),
         queriedAt: queriedAt,
-        tick: tick,
-        sqrtPriceX96: sqrtPriceX96,
-        priceX18: priceX18,
-        lpFee: lpFee,
         kntqSymbol: kntqSymbol,
         kntqDecimals: kntqDecimals,
         nftCount: Number(balance),
         prices: prices,
-        positions: positions,
+        pools: groups,
+        positions: flat,
+        totals: summarizePositions(flat),
       };
     } finally {
       try {
@@ -478,44 +658,21 @@
 
   function feeLabel(fee) {
     var pct = Number(fee) / 10000;
-    var digits = pct >= 1 ? 0 : 2;
-    return pct.toLocaleString("zh-CN", { minimumFractionDigits: digits, maximumFractionDigits: 2 }) + "%";
-  }
-
-  function renderPool(result) {
-    var pool = document.getElementById("pool");
-    pool.hidden = false;
-    pool.replaceChildren();
-    var title = el("div", "section-title");
-    title.append(el("h2", null, "池子状态"));
-    title.append(el("span", "sub", "HYPE / " + result.kntqSymbol + " · " + feeLabel(result.lpFee)));
-    pool.append(title);
-    var grid = el("div", "stats");
-    var items = [
-      ["隐含价格", "1 HYPE ≈ " + math.formatToken(result.priceX18, 18) + " " + result.kntqSymbol],
-      ["当前 Tick", String(result.tick)],
-      ["区块高度", String(result.blockNumber)],
-      ["区块时间", math.formatBeijing(result.blockTime)],
-      ["查询时间", math.formatBeijing(result.queriedAt)],
-      ["手续费档", feeLabel(result.lpFee) + " · 间距 " + String(TICK_SPACING)],
-    ];
-    items.forEach(function (item) {
-      var card = el("div", "stat");
-      card.append(el("div", "k", item[0]));
-      var value = el("div", "v", item[1]);
-      if (item[0] === "区块高度") value.dataset.field = "block";
-      if (item[0] === "隐含价格") value.dataset.field = "price";
-      if (item[0] === "查询时间") value.dataset.field = "time";
-      if (item[0] === "当前 Tick") value.dataset.field = "tick";
-      card.append(value);
-      grid.append(card);
-    });
-    pool.append(grid);
+    if (Math.abs(pct - Math.round(pct)) < 1e-9) return String(Math.round(pct)) + "%";
+    return String(Math.round(pct * 100) / 100) + "%";
   }
 
   function usdFor(amount, decimals, price) {
-    if (!price) return null;
+    if (amount == null || !price) return null;
     return math.amountToUsdE8(amount, decimals, price);
+  }
+
+  function pairUsd(amount0, amount1, decimals, prices) {
+    if (!prices || amount0 == null || amount1 == null) return null;
+    var usd0 = usdFor(amount0, HYPE_DECIMALS, prices.hype);
+    var usd1 = usdFor(amount1, decimals, prices.kntq);
+    if (usd0 == null || usd1 == null) return null;
+    return math.formatUsd(usd0 + usd1);
   }
 
   function appendMoney(parent, title, lines, usd) {
@@ -523,11 +680,120 @@
     box.append(el("h3", null, title));
     lines.forEach(function (line) {
       var row = el("div", "v", line.text);
-      if (line.name) row.dataset[line.name] = line.raw;
+      if (line.name) row.dataset[line.name] = line.raw == null ? "" : line.raw;
       box.append(row);
     });
     if (usd) box.append(el("div", "sub", "约 $" + usd));
     parent.append(box);
+  }
+
+  function tokenLine(amount, decimals, symbol) {
+    if (amount == null) return "暂不可用";
+    return math.formatToken(amount, decimals) + " " + symbol;
+  }
+
+  function rawAmount(amount, decimals) {
+    if (amount == null) return "";
+    return math.formatScaled(amount, decimals, 18, false);
+  }
+
+  function renderPool(result) {
+    var pool = document.getElementById("pool");
+    pool.hidden = false;
+    pool.replaceChildren();
+    var title = el("div", "section-title");
+    title.append(el("h2", null, "三个池的当前价格"));
+    title.append(el("span", "sub", "HYPE / " + result.kntqSymbol + " · 0.3% · 0.8% · 1%"));
+    pool.append(title);
+    var grid = el("div", "stats");
+    result.pools.forEach(function (group) {
+      var card = el("div", "stat");
+      card.dataset.poolFee = String(group.fee);
+      card.append(el("div", "k", feeLabel(group.fee) + " · 间距 " + group.tickSpacing));
+      if (group.error || group.priceX18 == null) {
+        card.append(el("div", "v", group.error || "价格不可用"));
+      } else {
+        var price = el("div", "v", "1 HYPE ≈ " + math.formatToken(group.priceX18, 18) + " " + result.kntqSymbol);
+        price.dataset.field = "price";
+        price.dataset.fee = String(group.fee);
+        card.append(price);
+        var tick = el("div", "sub", "Tick " + group.tick);
+        tick.dataset.field = "tick";
+        tick.dataset.fee = String(group.fee);
+        card.append(tick);
+      }
+      grid.append(card);
+    });
+    pool.append(grid);
+    var meta = el("div", "stats meta-stats");
+    [
+      ["区块高度", String(result.blockNumber), "block"],
+      ["区块时间", math.formatBeijing(result.blockTime), "block-time"],
+      ["查询时间", math.formatBeijing(result.queriedAt), "time"],
+    ].forEach(function (item) {
+      var card = el("div", "stat");
+      card.append(el("div", "k", item[0]));
+      var value = el("div", "v", item[1]);
+      value.dataset.field = item[2];
+      card.append(value);
+      meta.append(card);
+    });
+    pool.append(meta);
+  }
+
+  function renderTotals(parent, summary, result, names) {
+    var money = el("div", "money");
+    var principalUsd = summary.principalKnown
+      ? pairUsd(summary.principal0, summary.principal1, result.kntqDecimals, result.prices)
+      : null;
+    var feeUsd = summary.feesKnown
+      ? pairUsd(summary.fee0, summary.fee1, result.kntqDecimals, result.prices)
+      : null;
+    appendMoney(money, "本金合计", [
+      {
+        name: names.principal0,
+        raw: rawAmount(summary.principalKnown ? summary.principal0 : null, HYPE_DECIMALS),
+        text: summary.principalKnown
+          ? tokenLine(summary.principal0, HYPE_DECIMALS, "HYPE")
+          : "本金不完整",
+      },
+      {
+        name: names.principal1,
+        raw: rawAmount(summary.principalKnown ? summary.principal1 : null, result.kntqDecimals),
+        text: summary.principalKnown
+          ? tokenLine(summary.principal1, result.kntqDecimals, result.kntqSymbol)
+          : "本金不完整",
+      },
+    ], principalUsd);
+    appendMoney(money, "手续费合计", [
+      {
+        name: names.fee0,
+        raw: rawAmount(summary.feesKnown ? summary.fee0 : null, HYPE_DECIMALS),
+        text: summary.feesKnown
+          ? tokenLine(summary.fee0, HYPE_DECIMALS, "HYPE")
+          : "手续费不完整",
+      },
+      {
+        name: names.fee1,
+        raw: rawAmount(summary.feesKnown ? summary.fee1 : null, result.kntqDecimals),
+        text: summary.feesKnown
+          ? tokenLine(summary.fee1, result.kntqDecimals, result.kntqSymbol)
+          : "手续费不完整",
+      },
+    ], feeUsd);
+    parent.append(money);
+    if (principalUsd) {
+      var p = el("span", "usd-principal");
+      p.dataset[names.principalUsd] = principalUsd;
+      p.hidden = true;
+      parent.append(p);
+    }
+    if (feeUsd) {
+      var f = el("span", "usd-fee");
+      f.dataset[names.feeUsd] = feeUsd;
+      f.hidden = true;
+      parent.append(f);
+    }
   }
 
   function renderSummary(result) {
@@ -535,183 +801,142 @@
     var positions = document.getElementById("positions");
     summary.replaceChildren();
     positions.replaceChildren();
-    if (!result.positions.length) {
-      summary.hidden = true;
-      var empty = el("div", "empty");
+    summary.hidden = false;
+    var activePools = result.pools.filter(function (pool) { return pool.positions.length > 0; }).length;
+    var head = el("div", "section-title");
+    head.append(el("h2", null, "三池合计"));
+    head.append(el("span", "sub", result.totals.count + " 个仓位 · " + activePools + " 个池有仓位"));
+    summary.append(head);
+    if (result.totals.count === 0) {
+      var empty = el("p", "note");
       empty.dataset.field = "empty";
       if (result.nftCount === 0) {
-        empty.textContent = "这个地址没有任何 Uniswap v4 仓位 NFT。";
+        empty.textContent = "这个地址没有任何 Uniswap v4 仓位 NFT。下面三个 HYPE/KNTQ 池都是空的。";
       } else {
         empty.textContent =
-          "这个地址有 " +
-          result.nftCount +
-          " 个 Uniswap v4 仓位 NFT，但都不在 HYPE/" +
-          result.kntqSymbol +
-          " 池。";
+          "这个地址有 " + result.nftCount + " 个 Uniswap v4 仓位 NFT，但都不在这三档 HYPE/KNTQ 池里。";
       }
-      positions.append(empty);
-      return;
+      summary.append(empty);
     }
-    var totals = result.positions.reduce(
-      function (acc, pos) {
-        acc.principal0 += pos.principal0;
-        acc.principal1 += pos.principal1;
-        acc.fee0 += pos.fee0;
-        acc.fee1 += pos.fee1;
-        acc.inRange += pos.inRange ? 1 : 0;
-        return acc;
-      },
-      { principal0: 0n, principal1: 0n, fee0: 0n, fee1: 0n, inRange: 0 }
-    );
-    var prices = result.prices;
-    var feeUsd = null;
-    if (prices) {
-      var usd0 = usdFor(totals.fee0, HYPE_DECIMALS, prices.hype);
-      var usd1 = usdFor(totals.fee1, result.kntqDecimals, prices.kntq);
-      if (usd0 != null && usd1 != null) feeUsd = math.formatUsd(usd0 + usd1);
-    }
-    summary.hidden = false;
-    var head = el("div", "section-title");
-    head.append(el("h2", null, "合计"));
-    head.append(
-      el(
-        "span",
-        "sub",
-        result.positions.length + " 个仓位 · " + totals.inRange + " 个在范围内"
-      )
-    );
-    summary.append(head);
-    var money = el("div", "money");
-    appendMoney(money, "本金合计", [
-      {
-        name: "totalPrincipal0",
-        raw: math.formatScaled(totals.principal0, HYPE_DECIMALS, 18, false),
-        text: math.formatToken(totals.principal0, HYPE_DECIMALS) + " HYPE",
-      },
-      {
-        name: "totalPrincipal1",
-        raw: math.formatScaled(totals.principal1, result.kntqDecimals, 18, false),
-        text: math.formatToken(totals.principal1, result.kntqDecimals) + " " + result.kntqSymbol,
-      },
-    ]);
-    appendMoney(
-      money,
-      "手续费合计",
-      [
-        {
-          name: "totalFee0",
-          raw: math.formatScaled(totals.fee0, HYPE_DECIMALS, 18, false),
-          text: math.formatToken(totals.fee0, HYPE_DECIMALS) + " HYPE",
-        },
-        {
-          name: "totalFee1",
-          raw: math.formatScaled(totals.fee1, result.kntqDecimals, 18, false),
-          text: math.formatToken(totals.fee1, result.kntqDecimals) + " " + result.kntqSymbol,
-        },
-      ],
-      feeUsd
-    );
-    summary.append(money);
+    renderTotals(summary, result.totals, result, {
+      principal0: "totalPrincipal0",
+      principal1: "totalPrincipal1",
+      fee0: "totalFee0",
+      fee1: "totalFee1",
+      principalUsd: "totalPrincipalUsd",
+      feeUsd: "totalFeeUsd",
+    });
     var note = el("p", "note");
     note.dataset.field = "price-note";
-    if (!prices) {
+    if (!result.prices) {
       note.textContent = "暂时拿不到美元价格，上面只显示代币数量。美元估值不可用。";
     } else {
       note.textContent =
         "美元价格来自 " +
-        prices.source +
-        "，仅供参考。HYPE $" +
-        formatUnitPrice(prices.hype) +
+        result.prices.source +
+        "，三池共用同一套代币美元价，仅供参考。HYPE $" +
+        formatUnitPrice(result.prices.hype) +
         " · " +
         result.kntqSymbol +
         " $" +
-        formatUnitPrice(prices.kntq) +
-        "。";
+        formatUnitPrice(result.prices.kntq) +
+        "。各池的 HYPE/KNTQ 兑换价仍用该池自己的 tick。";
     }
     summary.append(note);
 
-    var listHead = el("div", "section-title");
-    listHead.append(el("h2", null, "仓位"));
-    positions.append(listHead);
-    result.positions.forEach(function (pos) {
-      positions.append(renderPosition(pos, result));
+    result.pools.forEach(function (group) {
+      positions.append(renderPoolGroup(group, result));
     });
   }
 
-  function renderPosition(pos, result) {
+  function renderPoolGroup(group, result) {
+    var section = el("section", "panel pool-group");
+    section.dataset.poolFee = String(group.fee);
+    var head = el("div", "section-title");
+    head.append(el("h2", null, feeLabel(group.fee) + " 池"));
+    var rangeCount = group.positions.filter(function (pos) { return pos.inRange === true; }).length;
+    head.append(el("span", "sub", group.positions.length + " 个仓位 · " + rangeCount + " 个在范围内"));
+    section.append(head);
+    if (group.error) section.append(el("p", "note", group.error + "。本金和是否在范围内暂不计算，避免误用其他池的价格。"));
+    if (!group.positions.length) {
+      var empty = el("div", "empty");
+      empty.dataset.emptyPool = String(group.fee);
+      empty.textContent = "这个地址在 " + feeLabel(group.fee) + " 池里没有 LP 仓位。";
+      section.append(empty);
+      return section;
+    }
+    renderTotals(section, group.subtotal, result, {
+      principal0: "poolPrincipal0",
+      principal1: "poolPrincipal1",
+      fee0: "poolFee0",
+      fee1: "poolFee1",
+      principalUsd: "poolPrincipalUsd",
+      feeUsd: "poolFeeUsd",
+    });
+    group.positions.forEach(function (pos) {
+      section.append(renderPosition(pos, result, group));
+    });
+    return section;
+  }
+
+  function renderPosition(pos, result, group) {
     var card = el("article", "pos");
     card.dataset.tokenId = pos.tokenId.toString();
+    card.dataset.fee = String(pos.fee);
+    if (pos.poolTick != null) card.dataset.poolTick = String(pos.poolTick);
     var head = el("div", "pos-head");
-    head.append(el("div", "token-id", "仓位 NFT #" + pos.tokenId.toString()));
-    head.append(el("span", pos.inRange ? "badge good" : "badge bad", pos.inRange ? "在范围内" : "超出范围"));
+    var title = el("div", "token-id", "仓位 NFT #" + pos.tokenId.toString());
+    head.append(title);
+    var badges = el("div", "pos-head");
+    badges.append(el("span", "badge", feeLabel(pos.fee)));
+    if (pos.readError) badges.append(el("span", "badge bad", "读取失败"));
+    else if (pos.inRange === true) badges.append(el("span", "badge good", "在范围内"));
+    else if (pos.inRange === false) badges.append(el("span", "badge bad", "超出范围"));
+    else badges.append(el("span", "badge bad", "价格未知"));
+    head.append(badges);
     card.append(head);
+    if (pos.readError) {
+      card.append(el("p", "note", pos.readError));
+      return card;
+    }
 
     var lowerPrice = math.formatToken(math.tickToPriceX18(pos.tickLower), 18);
     var upperPrice = math.formatToken(math.tickToPriceX18(pos.tickUpper), 18);
     var meta = el("div", "range-meta");
-    meta.append(el("div", null, "Tick 区间 " + pos.tickLower + " → " + pos.tickUpper));
-    meta.append(
-      el(
-        "div",
-        null,
-        "价格区间约 " + lowerPrice + " → " + upperPrice + " " + result.kntqSymbol + " / HYPE"
-      )
-    );
+    meta.append(el("div", null, "Tick 区间 " + pos.tickLower + " → " + pos.tickUpper + " · 间距 " + pos.tickSpacing));
+    meta.append(el("div", null, "价格区间约 " + lowerPrice + " → " + upperPrice + " " + result.kntqSymbol + " / HYPE"));
     card.append(meta);
 
-    var width = pos.tickUpper - pos.tickLower;
-    var ratio = width === 0 ? 0.5 : (result.tick - pos.tickLower) / width;
-    var clamped = Math.min(1, Math.max(0, ratio));
-    var track = el("div", "track");
-    var mark = el("span", "tick-mark");
-    mark.style.left = (clamped * 100).toFixed(2) + "%";
-    track.append(mark);
-    card.append(track);
-    var above = result.tick >= pos.tickUpper;
-    var sentence = pos.inRange
-      ? "当前价格落在这个区间内，仓位同时持有 HYPE 和 " + result.kntqSymbol + "。"
-      : above
-        ? "当前价格高于区间，仓位目前全部是 " + result.kntqSymbol + "。"
-        : "当前价格低于区间，仓位目前全部是 HYPE。";
-    card.append(el("div", "sub", sentence));
-
-    var prices = result.prices;
-    var feeUsd = null;
-    if (prices) {
-      var usd0 = usdFor(pos.fee0, HYPE_DECIMALS, prices.hype);
-      var usd1 = usdFor(pos.fee1, result.kntqDecimals, prices.kntq);
-      if (usd0 != null && usd1 != null) feeUsd = math.formatUsd(usd0 + usd1);
+    if (pos.poolTick != null) {
+      var width = pos.tickUpper - pos.tickLower;
+      var ratio = width === 0 ? 0.5 : (pos.poolTick - pos.tickLower) / width;
+      var clamped = Math.min(1, Math.max(0, ratio));
+      var track = el("div", "track");
+      var mark = el("span", "tick-mark");
+      mark.style.left = (clamped * 100).toFixed(2) + "%";
+      track.append(mark);
+      card.append(track);
+      var sentence = pos.inRange
+        ? "当前价格落在这个区间内，仓位同时持有 HYPE 和 " + result.kntqSymbol + "。"
+        : pos.poolTick >= pos.tickUpper
+          ? "当前价格高于区间，仓位目前全部是 " + result.kntqSymbol + "。"
+          : "当前价格低于区间，仓位目前全部是 HYPE。";
+      card.append(el("div", "sub", sentence + " 使用 " + feeLabel(group.fee) + " 池的 tick " + pos.poolTick + "。"));
+    } else {
+      card.append(el("div", "sub", "这个池的当前价格没有读到，所以不计算本金，也不借用其他池的 tick。"));
     }
+
+    var feeUsd = pairUsd(pos.fee0, pos.fee1, result.kntqDecimals, result.prices);
+    var principalUsd = pairUsd(pos.principal0, pos.principal1, result.kntqDecimals, result.prices);
     var money = el("div", "money");
     appendMoney(money, "本金", [
-      {
-        name: "principal0",
-        raw: math.formatScaled(pos.principal0, HYPE_DECIMALS, 18, false),
-        text: math.formatToken(pos.principal0, HYPE_DECIMALS) + " HYPE",
-      },
-      {
-        name: "principal1",
-        raw: math.formatScaled(pos.principal1, result.kntqDecimals, 18, false),
-        text: math.formatToken(pos.principal1, result.kntqDecimals) + " " + result.kntqSymbol,
-      },
-    ]);
-    appendMoney(
-      money,
-      "未领取手续费",
-      [
-        {
-          name: "fee0",
-          raw: math.formatScaled(pos.fee0, HYPE_DECIMALS, 18, false),
-          text: math.formatToken(pos.fee0, HYPE_DECIMALS) + " HYPE",
-        },
-        {
-          name: "fee1",
-          raw: math.formatScaled(pos.fee1, result.kntqDecimals, 18, false),
-          text: math.formatToken(pos.fee1, result.kntqDecimals) + " " + result.kntqSymbol,
-        },
-      ],
-      feeUsd
-    );
+      { name: "principal0", raw: rawAmount(pos.principal0, HYPE_DECIMALS), text: tokenLine(pos.principal0, HYPE_DECIMALS, "HYPE") },
+      { name: "principal1", raw: rawAmount(pos.principal1, result.kntqDecimals), text: tokenLine(pos.principal1, result.kntqDecimals, result.kntqSymbol) },
+    ], principalUsd);
+    appendMoney(money, "未领取手续费", [
+      { name: "fee0", raw: rawAmount(pos.fee0, HYPE_DECIMALS), text: tokenLine(pos.fee0, HYPE_DECIMALS, "HYPE") },
+      { name: "fee1", raw: rawAmount(pos.fee1, result.kntqDecimals), text: tokenLine(pos.fee1, result.kntqDecimals, result.kntqSymbol) },
+    ], feeUsd);
     card.append(money);
     return card;
   }
@@ -727,10 +952,12 @@
       "PoolManager：" + POOL_MANAGER,
       "HYPE：原生代币，PoolKey currency0 = " + ethers.ZeroAddress,
       "KNTQ：" + ethers.getAddress(KNTQ) + "，18 位小数",
-      "手续费 10000（1%），tickSpacing 200，hooks = " + ethers.ZeroAddress,
-      "PoolId：" + POOL_ID,
-      "未领取手续费 = (feeGrowthInside − feeGrowthInsideLast) × liquidity / 2^128。数值在浏览器内计算。",
+      "hooks = " + ethers.ZeroAddress,
     ];
+    POOLS.forEach(function (pool) {
+      rows.push(feeLabel(pool.fee) + " fee " + pool.fee + "，tickSpacing " + pool.tickSpacing + "，PoolId " + pool.id);
+    });
+    rows.push("未领取手续费 = (feeGrowthInside − feeGrowthInsideLast) × liquidity / 2^128。每个池用自己的 slot0。");
     rows.forEach(function (row) {
       box.append(el("div", null, row));
     });
@@ -772,11 +999,8 @@
       if (gen !== generation) return;
       status.className = "status error";
       var message = shortError(err);
-      if (message.indexOf("请输入有效的钱包地址") !== -1) {
-        status.textContent = message;
-      } else {
-        status.textContent = "查询失败：" + message + "。公共 RPC 为 " + RPC_URL + "，请稍后重试。";
-      }
+      if (message.indexOf("请输入有效的钱包地址") !== -1) status.textContent = message;
+      else status.textContent = "查询失败：" + message + "。公共 RPC 为 " + RPC_URL + "，请稍后重试。";
     } finally {
       if (gen === generation) button.disabled = false;
     }
@@ -806,7 +1030,10 @@
 
   globalThis.ElysiumLp = {
     queryPositions: queryPositions,
-    canonicalPoolId: canonicalPoolId,
+    valuePositions: valuePositions,
+    summarizePositions: summarizePositions,
+    pools: POOLS,
+    poolIdOf: poolIdOf,
   };
 
   boot();
