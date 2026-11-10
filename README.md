@@ -1,6 +1,6 @@
 # HYPE / KNTQ 流动性查询
 
-在线页面：<https://lliyda.github.io/eylsium_lp/>
+启用 GitHub Pages 之后的地址：<https://lliyda.github.io/eylsium_lp/>（目前还是 404，打开步骤见文末）
 
 这是一个纯静态、只读的单页工具。在浏览器里输入钱包地址，即可查看该地址在 Elysium（Kinetiq L2）Uniswap v4 **HYPE/KNTQ** 池中的 LP 仓位，包括本金和未领取手续费。
 
@@ -8,7 +8,7 @@
 
 ## 怎么查询
 
-1. 打开 <https://lliyda.github.io/eylsium_lp/>。
+1. 打开 <https://lliyda.github.io/eylsium_lp/>（需要先按文末步骤打开 Pages）。
 2. 钱包地址栏里已经填好示例地址 `0xe9b9ab375c0b3bc83af239bb30908f5d710d12a8`，也可以换成任意地址。
 3. 点击「查询」。
 
@@ -61,19 +61,21 @@
 
 预期地址：<https://lliyda.github.io/eylsium_lp/>
 
-静态文件在 `main` 分支的仓库根目录，入口是 `index.html`。仓库里有 `.nojekyll`，避免 Jekyll 处理这些文件。
+静态文件已经在 `main` 分支的仓库根目录，入口是 `index.html`。仓库里有 `.nojekyll`，避免 Jekyll 处理这些文件。
 
-用来推送代码的 GitHub 集成没有 Pages 管理权限。调用「创建 Pages 站点」接口时返回 `403 Resource not accessible by integration`，因此无法直接把来源设成 Deploy from a branch。
+Pages 目前没有打开，所以上面的地址仍是 404。自动打开也被拒绝了两次，都是 `403 Resource not accessible by integration`：
 
-`.github/workflows/pages.yml` 会在每次推送到 `main` 时，用 GitHub Actions 把同一批静态文件发布到 GitHub Pages。如果这个 workflow 没有成功，请仓库所有者打开：
+- 直接调用 GitHub API 创建 Pages 站点。
+- GitHub Actions 里的 `actions/configure-pages`（`enablement: true`）创建站点。Actions 自带的 `GITHUB_TOKEN` 同样没有管理员权限，不能代为打开 Pages。
 
-<https://github.com/lliyda/eylsium_lp/settings/pages>
+请仓库所有者手动打开一次：
 
-1. 进入 **Settings → Pages**。
-2. 在 **Build and deployment** 里选择 **Deploy from a branch**。如果页面上已经是 GitHub Actions 但部署失败，改成这个来源即可；改完后可以停用 `.github/workflows/pages.yml`，避免两种来源来回切换。
-3. Branch 选择 **main**，文件夹选择 **/ (root)**。
-4. 点击 **Save**。
-5. 等一两分钟，再打开 <https://lliyda.github.io/eylsium_lp/>。
+1. 打开 <https://github.com/lliyda/eylsium_lp/settings/pages>。
+2. 进入 **Settings → Pages**。
+3. 在 **Build and deployment** 里选择 **Deploy from a branch**。
+4. Branch 选择 **main**，文件夹选择 **/ (root)**。
+5. 点击 **Save**。
+6. 等一两分钟，再打开 <https://lliyda.github.io/eylsium_lp/>。
 
 查询库使用随仓库提供的 [ethers.js](https://github.com/ethers-io/ethers.js) v6.13.5（MIT，见 `vendor/LICENSE-ethers.txt`）。
 
@@ -81,7 +83,7 @@
 
 # HYPE / KNTQ liquidity viewer
 
-Live page: <https://lliyda.github.io/eylsium_lp/>
+URL after GitHub Pages is enabled: <https://lliyda.github.io/eylsium_lp/> (it is still a 404; the click path is at the end)
 
 This is a static, read-only single page. Paste a wallet address to see that wallet's Uniswap v4 **HYPE/KNTQ** LP positions on Elysium (Kinetiq L2), including principal and unclaimed trading fees.
 
@@ -89,7 +91,7 @@ There is no wallet connection, no signature request, and no transaction. Every c
 
 ## How to query
 
-1. Open <https://lliyda.github.io/eylsium_lp/>.
+1. Open <https://lliyda.github.io/eylsium_lp/> (enable Pages first, using the steps at the end).
 2. The address field is prefilled with `0xe9b9ab375c0b3bc83af239bb30908f5d710d12a8`. Any other address works too.
 3. Click **查询**.
 
@@ -136,18 +138,20 @@ At block `3752301` (about 12:37 Beijing time on 2026-11-10), the example wallet'
 
 Expected URL: <https://lliyda.github.io/eylsium_lp/>
 
-The static files live at the root of `main` (`index.html`). `.nojekyll` keeps Jekyll from processing them.
+The static files are already at the root of `main` (`index.html`). `.nojekyll` keeps Jekyll from processing them.
 
-The GitHub integration that pushed this repo does not have permission to administer Pages. Creating the site through the API returned `403 Resource not accessible by integration`, so the source could not be set to Deploy from a branch directly.
+Pages is not enabled, so that URL is still a 404. Two attempts to enable it were refused with `403 Resource not accessible by integration`:
 
-`.github/workflows/pages.yml` publishes the same static files with GitHub Actions on every push to `main`. If that workflow does not succeed, the repository owner should open:
+- Creating the site directly through the GitHub API.
+- Creating it from GitHub Actions with `actions/configure-pages` and `enablement: true`. The workflow `GITHUB_TOKEN` does not have admin permission either, so it cannot turn Pages on.
 
-<https://github.com/lliyda/eylsium_lp/settings/pages>
+The repository owner needs to do this once:
 
-1. Go to **Settings → Pages**.
-2. Under **Build and deployment**, choose **Deploy from a branch**. If the source is already GitHub Actions and that deploy failed, switch it to this. After switching, disable `.github/workflows/pages.yml` so the two sources do not replace each other.
-3. Choose branch **main** and folder **/ (root)**.
-4. Click **Save**.
-5. Wait a minute, then open <https://lliyda.github.io/eylsium_lp/>.
+1. Open <https://github.com/lliyda/eylsium_lp/settings/pages>.
+2. Go to **Settings → Pages**.
+3. Under **Build and deployment**, choose **Deploy from a branch**.
+4. Choose branch **main** and folder **/ (root)**.
+5. Click **Save**.
+6. Wait a minute, then open <https://lliyda.github.io/eylsium_lp/>.
 
 The query library is [ethers.js](https://github.com/ethers-io/ethers.js) v6.13.5, vendored under `vendor/` (MIT, see `vendor/LICENSE-ethers.txt`).
