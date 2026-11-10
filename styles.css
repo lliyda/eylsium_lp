@@ -91,6 +91,10 @@ h1 {
 .status + .panel,
 .positions { margin-top: 14px; }
 
+.meta-stats { margin-top: 12px; }
+
+.pool-group + .pool-group { margin-top: 14px; }
+
 form {
   display: grid;
   grid-template-columns: 1fr auto;
