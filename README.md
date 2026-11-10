@@ -59,13 +59,21 @@
 
 ## GitHub Pages
 
-站点从 `main` 分支的仓库根目录发布，入口是 `index.html`。仓库里有 `.nojekyll`，避免 GitHub Pages 的 Jekyll 处理这些静态文件。
+预期地址：<https://lliyda.github.io/eylsium_lp/>
 
-如果线上地址还是 404，请在 GitHub 打开本仓库的 **Settings → Pages**：
+静态文件在 `main` 分支的仓库根目录，入口是 `index.html`。仓库里有 `.nojekyll`，避免 Jekyll 处理这些文件。
 
-1. Build and deployment 选择 **Deploy from a branch**。
-2. Branch 选择 **main**，文件夹选择 **/ (root)**。
-3. 保存，等待一两分钟后再打开 <https://lliyda.github.io/eylsium_lp/>。
+用来推送代码的 GitHub 集成没有 Pages 管理权限。调用「创建 Pages 站点」接口时返回 `403 Resource not accessible by integration`，因此无法直接把来源设成 Deploy from a branch。
+
+`.github/workflows/pages.yml` 会在每次推送到 `main` 时，用 GitHub Actions 把同一批静态文件发布到 GitHub Pages。如果这个 workflow 没有成功，请仓库所有者打开：
+
+<https://github.com/lliyda/eylsium_lp/settings/pages>
+
+1. 进入 **Settings → Pages**。
+2. 在 **Build and deployment** 里选择 **Deploy from a branch**。如果页面上已经是 GitHub Actions 但部署失败，改成这个来源即可；改完后可以停用 `.github/workflows/pages.yml`，避免两种来源来回切换。
+3. Branch 选择 **main**，文件夹选择 **/ (root)**。
+4. 点击 **Save**。
+5. 等一两分钟，再打开 <https://lliyda.github.io/eylsium_lp/>。
 
 查询库使用随仓库提供的 [ethers.js](https://github.com/ethers-io/ethers.js) v6.13.5（MIT，见 `vendor/LICENSE-ethers.txt`）。
 
@@ -126,12 +134,20 @@ At block `3752301` (about 12:37 Beijing time on 2026-11-10), the example wallet'
 
 ## GitHub Pages
 
-The site is published from the root of the `main` branch (`index.html`). `.nojekyll` is included so GitHub Pages does not run Jekyll.
+Expected URL: <https://lliyda.github.io/eylsium_lp/>
 
-If the live URL 404s, open **Settings → Pages** in this repository:
+The static files live at the root of `main` (`index.html`). `.nojekyll` keeps Jekyll from processing them.
 
-1. Set Build and deployment to **Deploy from a branch**.
-2. Choose branch **main** and folder **/ (root)**.
-3. Save, wait a minute, then reload <https://lliyda.github.io/eylsium_lp/>.
+The GitHub integration that pushed this repo does not have permission to administer Pages. Creating the site through the API returned `403 Resource not accessible by integration`, so the source could not be set to Deploy from a branch directly.
+
+`.github/workflows/pages.yml` publishes the same static files with GitHub Actions on every push to `main`. If that workflow does not succeed, the repository owner should open:
+
+<https://github.com/lliyda/eylsium_lp/settings/pages>
+
+1. Go to **Settings → Pages**.
+2. Under **Build and deployment**, choose **Deploy from a branch**. If the source is already GitHub Actions and that deploy failed, switch it to this. After switching, disable `.github/workflows/pages.yml` so the two sources do not replace each other.
+3. Choose branch **main** and folder **/ (root)**.
+4. Click **Save**.
+5. Wait a minute, then open <https://lliyda.github.io/eylsium_lp/>.
 
 The query library is [ethers.js](https://github.com/ethers-io/ethers.js) v6.13.5, vendored under `vendor/` (MIT, see `vendor/LICENSE-ethers.txt`).
